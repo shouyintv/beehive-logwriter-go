@@ -76,7 +76,7 @@ func (w *Writer) rotate(year, month, day int) error {
 	if w.f != nil {
 		// prefix.yyyy-MM-dd.id
 		w.id++
-		newpath := w.path + fmt.Sprintf(".%04d-%02d-%02d.%d", year, month, day, w.id)
+		newpath := w.path + fmt.Sprintf(".%04d-%02d-%02d.%d", year, month, w.day, w.id)
 
 		os.Rename(w.path, newpath)
 
@@ -91,7 +91,7 @@ func (w *Writer) rotate(year, month, day int) error {
 	return w.reopen(day)
 }
 
-func (w *Writer) writeToFile(p []byte) (n int, err error) {
+func (w *Writer) writeFile(p []byte) (n int, err error) {
 	now := time.Now()
 	f := w.f
 	year, month, day := now.Date()
@@ -127,6 +127,11 @@ func (w *Writer) writeToFile(p []byte) (n int, err error) {
 
 	if f != nil {
 		n, err = f.Write(p)
+		if err != nil {
+			w.mu.Lock()
+			w.day = 0
+			w.mu.Unlock()
+		}
 	}
 	return
 }
@@ -138,7 +143,7 @@ func (w *Writer) Write(p []byte) (n int, err error) {
 	}
 	if w.ToFile {
 		// override os.Stdout.Write result
-		n, err = w.writeToFile(p)
+		n, err = w.writeFile(p)
 	}
 	return
 }
