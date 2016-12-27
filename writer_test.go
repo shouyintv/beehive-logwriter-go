@@ -3,8 +3,10 @@ package logwriter
 import (
 	"log"
 	"os"
+	"reflect"
 	"strconv"
 	"testing"
+	"time"
 )
 
 func TestRingPush(t *testing.T) {
@@ -17,9 +19,9 @@ func TestRingPush(t *testing.T) {
 	}
 }
 
-func TestWrite(t *testing.T) {
-	os.RemoveAll("./testdata/")
-	w, err := NewWriter("./testdata/roll.log", 50, 0)
+func TestSyncWrite(t *testing.T) {
+	os.RemoveAll("./testdata/sync")
+	w, err := NewWriter("./testdata/sync/roll.log", 50, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,5 +30,30 @@ func TestWrite(t *testing.T) {
 
 	for i := 0; i < 30; i++ {
 		log.Println(i)
+	}
+}
+
+func TestAsyncWrite(t *testing.T) {
+	os.RemoveAll("./testdata/async")
+	w, err := NewWriter("./testdata/async/roll.log", 50, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Async()
+	w.ToFile = true
+	log.SetOutput(w)
+
+	for i := 0; i < 30; i++ {
+		log.Println(i)
+	}
+
+	time.Sleep(time.Second)
+}
+
+func TestWriteFields(t *testing.T) {
+	rt := reflect.TypeOf(Writer{})
+	for i := 0; i < rt.NumField(); i++ {
+		f := rt.Field(i)
+		t.Logf("%-10s %-4d %4d", f.Name, f.Offset, f.Type.Size())
 	}
 }

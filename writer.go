@@ -2,6 +2,7 @@
 package logwriter
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -13,6 +14,16 @@ import (
 const (
 	dirPerm  os.FileMode = 0755
 	filePerm os.FileMode = 0644
+
+	logQueueSize = 2048
+)
+
+var (
+	bufpool = sync.Pool{
+		New: func() interface{} {
+			return bytes.NewBuffer(nil)
+		},
+	}
 )
 
 // Writer 实现了一个支持文件滚动的 io.Writer
@@ -21,20 +32,24 @@ type Writer struct {
 	wmu   sync.Mutex
 	wrote int
 
-	mu   sync.Mutex
-	day  int
+	mu  sync.Mutex
+	day int
+
+	limit     int
+	logq      chan *bytes.Buffer
+	async     bool
+	ToFile    bool
+	ToConsole bool
+
 	id   int
 	ring []fileinfo
 	head int
 	tail int
 
-	limit    int
 	maxfiles int
 	path     string
 	dir      string
-
-	ToFile    bool
-	ToConsole bool
+	once     sync.Once
 }
 
 func (w *Writer) ringPush(id int, name string) string {
@@ -91,6 +106,53 @@ func (w *Writer) rotate(year, month, day int) error {
 	return w.reopen(day)
 }
 
+func (w *Writer) writeUnsafe(p []byte) error {
+	var err error
+	now := time.Now()
+	f := w.f
+	year, month, day := now.Date()
+	if day != w.day {
+		// daily rotate
+		if day != w.day {
+			err = w.rotate(year, int(month), day)
+		}
+		f = w.f
+	}
+	if err != nil {
+		return err
+	}
+
+	w.wrote += len(p)
+	if w.wrote > w.limit {
+		// limit rotate
+		if w.wrote > w.limit {
+			err = w.rotate(year, int(month), day)
+		}
+		f = w.f
+		w.wrote = len(p)
+	}
+	if err != nil {
+		return err
+	}
+
+	if f != nil {
+		_, err = f.Write(p)
+		if err != nil {
+			w.day = 0
+		}
+	}
+	return nil
+}
+
+func (w *Writer) writeAsync(p []byte) (n int, err error) {
+	buf := bufpool.Get().(*bytes.Buffer)
+	buf.Reset()
+	buf.Write(p)
+	n = len(p)
+	w.logq <- buf
+	return
+}
+
 func (w *Writer) writeFile(p []byte) (n int, err error) {
 	now := time.Now()
 	f := w.f
@@ -142,8 +204,12 @@ func (w *Writer) Write(p []byte) (n int, err error) {
 		n, err = os.Stdout.Write(p)
 	}
 	if w.ToFile {
-		// override os.Stdout.Write result
-		n, err = w.writeFile(p)
+		if w.async {
+			n, err = w.writeAsync(p)
+		} else {
+			// override os.Stdout.Write result
+			n, err = w.writeFile(p)
+		}
 	}
 	return
 }
@@ -155,6 +221,26 @@ func (w *Writer) Flush() error {
 		return f.Sync()
 	}
 	return nil
+}
+
+func (w *Writer) asyncWork() {
+	for buf := range w.logq {
+		err := w.writeUnsafe(buf.Bytes())
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+		bufpool.Put(buf)
+	}
+}
+
+func (w *Writer) Async() {
+	w.once.Do(func() {
+		w.logq = make(chan *bytes.Buffer, logQueueSize)
+		go w.asyncWork()
+		w.async = true
+		w.wmu.Lock()
+		w.mu.Lock()
+	})
 }
 
 // NewWriter 创建一个 logwriter.Writer
