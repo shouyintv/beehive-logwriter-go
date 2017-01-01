@@ -91,6 +91,13 @@ func (w *Writer) rotate(year, month, day int) error {
 	if w.f != nil {
 		// prefix.yyyy-MM-dd.id
 		w.id++
+		if day == 1 {
+			month--
+			if month == 0 {
+				month = 12
+				year--
+			}
+		}
 		newpath := w.path + fmt.Sprintf(".%04d-%02d-%02d.%d", year, month, w.day, w.id)
 
 		os.Rename(w.path, newpath)
