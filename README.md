@@ -20,7 +20,7 @@ func main() {
 		panic(err)
 	}
 	w.ToConsole = true
-	w.ToFile = false
 	w.Write([]byte("hello world\n"))
+    w.Sync()
 }
 ```
