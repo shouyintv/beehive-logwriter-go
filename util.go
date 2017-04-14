@@ -1,8 +1,6 @@
 package logwriter
 
 import (
-	"compress/gzip"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -29,56 +27,43 @@ func (s fislice) Less(i, j int) bool {
 	return s[i].id < s[j].id
 }
 
-func collectFiles(dir string, prefix string, maxfile int) []fileinfo {
-	if maxfile == 0 {
-		return nil
-	}
+func collectFiles(dir string, prefix string, maxfile int) ([]fileinfo, int) {
+	maxid := 0
 	filist := make([]fileinfo, 0, maxfile)
+
 	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if info == nil || err != nil {
 			return err
 		}
 		if !info.IsDir() {
 			name := info.Name()
-			//  前缀
+			// filter by name prefix
 			if !strings.HasPrefix(name, prefix) {
 				return nil
 			}
 			p := strings.LastIndexByte(name[:len(name)], '.')
 			id, err := strconv.Atoi(name[p+1 : len(name)])
-			// 忽略非数字结尾
 			if err != nil {
+				// ignore non-numeric suffix
 				return nil
 			}
-			filist = append(filist, fileinfo{id: id, path: path})
+			if id > maxid {
+				maxid = id
+			}
+			if maxfile > 0 {
+				filist = append(filist, fileinfo{id: id, path: path})
+			}
 		} else if dir != path {
 			return filepath.SkipDir
 		}
 		return nil
 	})
+
 	sort.Sort(fislice(filist))
+
 	head := len(filist) - maxfile
 	if head < 0 {
 		head = 0
 	}
-	return filist[head:]
-}
-
-func compress(src, dst string) error {
-	fsrc, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer fsrc.Close()
-
-	fdst, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer fdst.Close()
-
-	comp := gzip.NewWriter(fdst)
-	defer comp.Close()
-	_, err = io.Copy(comp, fsrc)
-	return err
+	return filist[head:], maxid
 }

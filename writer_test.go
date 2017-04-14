@@ -14,7 +14,7 @@ func TestRingPush(t *testing.T) {
 		maxfiles: 10,
 	}
 	for i := 0; i < 20; i++ {
-		t.Log(w.ringPush(i, "file_"+strconv.Itoa(i)))
+		t.Log(w.push(i, "file_"+strconv.Itoa(i)))
 	}
 }
 

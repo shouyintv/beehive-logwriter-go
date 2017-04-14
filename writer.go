@@ -16,7 +16,7 @@ const (
 	dirPerm  os.FileMode = 0755
 	filePerm os.FileMode = 0644
 
-	logQueueSize = 2048
+	queueCapacity = 2048
 )
 
 var (
@@ -52,7 +52,7 @@ type Writer struct {
 	err  error
 }
 
-func (w *Writer) ringPush(id int, name string) string {
+func (w *Writer) push(id int, name string) string {
 	var removed string
 	if w.maxfiles+w.head == w.tail && w.maxfiles != 0 {
 		removed = w.ring[w.head%len(w.ring)].path
@@ -112,7 +112,7 @@ func (w *Writer) rotate(year, month, day int) error {
 		os.Rename(w.path, newpath)
 
 		if w.maxfiles > 0 {
-			removed := w.ringPush(w.id, newpath)
+			removed := w.push(w.id, newpath)
 			if removed != "" {
 				os.Remove(removed)
 			}
@@ -122,8 +122,8 @@ func (w *Writer) rotate(year, month, day int) error {
 	return w.reopen(day)
 }
 
-// writeUnsafe [unsafe]
-func (w *Writer) writeUnsafe(p []byte) error {
+// write [unsafe]
+func (w *Writer) write(p []byte) error {
 	var err error
 	now := time.Now()
 	f := w.f
@@ -162,7 +162,6 @@ func (w *Writer) writeUnsafe(p []byte) error {
 func (w *Writer) ioloop() {
 	for buf := range w.logq {
 		if buf == nil {
-
 			if w.f != nil {
 				err := w.f.Sync()
 				if err != nil {
@@ -171,11 +170,10 @@ func (w *Writer) ioloop() {
 					w.f = nil
 				}
 			}
-
 			w.cond.Signal()
 			continue
 		}
-		err := w.writeUnsafe(buf.Bytes())
+		err := w.write(buf.Bytes())
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 		}
@@ -218,17 +216,13 @@ func NewWriter(path string, limit int, maxfiles int) (*Writer, error) {
 
 	dir := filepath.Dir(path)
 	base := filepath.Base(path)
-	filist := collectFiles(dir, base, maxfiles)
-	id := 0
-	if len(filist) > 0 {
-		id = filist[len(filist)-1].id
-	}
+	filist, maxid := collectFiles(dir, base, maxfiles)
 
 	w := &Writer{
 		limit:     limit,
-		logq:      make(chan *bytes.Buffer, logQueueSize),
+		logq:      make(chan *bytes.Buffer, queueCapacity),
 		ToConsole: false,
-		id:        id,
+		id:        maxid,
 		ring:      filist[:cap(filist)],
 		head:      0,
 		tail:      len(filist),
