@@ -199,12 +199,12 @@ func (w *Writer) Sync() error {
 	return err
 }
 
-// NewWriter 创建一个 logwriter.Writer
+// New 创建一个 logwriter.Writer
 //
 //   path 滚动日志文件
 //   limit 单个文件大小
 //   maxfiles 最多文件数量, 0 不限制文件数量
-func NewWriter(path string, limit int, maxfiles int) *Writer {
+func New(path string, limit int, maxfiles int) *Writer {
 	dir := filepath.Dir(path)
 	base := filepath.Base(path)
 	filist, maxid := collectFiles(dir, base, maxfiles)
@@ -227,4 +227,8 @@ func NewWriter(path string, limit int, maxfiles int) *Writer {
 
 	go w.ioloop()
 	return w
+}
+
+func NewWriter(path string, limit int, maxfiles int) (*Writer, error) {
+	return New(path, limit, maxfiles), nil
 }
