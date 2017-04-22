@@ -13,6 +13,7 @@ type fileinfo struct {
 	path string
 }
 
+/*
 type fislice []fileinfo
 
 func (s fislice) Len() int {
@@ -26,6 +27,7 @@ func (s fislice) Swap(i, j int) {
 func (s fislice) Less(i, j int) bool {
 	return s[i].id < s[j].id
 }
+*/
 
 func collectFiles(dir string, prefix string, maxfile int) ([]fileinfo, int) {
 	maxid := 0
@@ -59,7 +61,10 @@ func collectFiles(dir string, prefix string, maxfile int) ([]fileinfo, int) {
 		return nil
 	})
 
-	sort.Sort(fislice(filist))
+	// sort.Sort(fislice(filist))
+	sort.Slice(filist, func(i, j int) bool {
+		return filist[i].id < filist[j].id
+	})
 
 	head := len(filist) - maxfile
 	if head < 0 {

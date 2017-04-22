@@ -2,8 +2,6 @@
 package logwriter
 
 import (
-	"bytes"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,14 +17,6 @@ const (
 	queueCapacity = 2048
 )
 
-var (
-	bufpool = sync.Pool{
-		New: func() interface{} {
-			return bytes.NewBuffer(nil)
-		},
-	}
-)
-
 // Writer 实现了一个支持文件滚动的 io.Writer
 type Writer struct {
 	f     *os.File
@@ -34,9 +24,11 @@ type Writer struct {
 	day   int
 
 	limit int
-	logq  chan *bytes.Buffer
+	logq  chan []byte
 
-	ToConsole bool
+	ToConsole   bool
+	DailyRotate bool
+	LimitRotate bool
 
 	id   int
 	ring []fileinfo
@@ -79,7 +71,6 @@ func (w *Writer) reopen(day int) (err error) {
 		w.day = day
 		info, err := w.f.Stat()
 		if err == nil {
-			// file created/existed
 			w.wrote = int(info.Size())
 		}
 		return nil
@@ -107,7 +98,6 @@ func (w *Writer) rotate(year, month, day int) error {
 			w.f.Close()
 		}
 
-		// rename file
 		newpath := w.path + fmt.Sprintf(".%04d-%02d-%02d.%d", year, month, w.day, w.id)
 		os.Rename(w.path, newpath)
 
@@ -125,11 +115,11 @@ func (w *Writer) rotate(year, month, day int) error {
 // write [unsafe]
 func (w *Writer) write(p []byte) error {
 	var err error
-	now := time.Now()
 	f := w.f
+	now := time.Now()
 	year, month, day := now.Date()
-	if day != w.day {
-		// daily rotate
+	if w.DailyRotate && day != w.day {
+		// 日期滚动
 		if day != w.day {
 			err = w.rotate(year, int(month), day)
 			if err != nil {
@@ -140,12 +130,13 @@ func (w *Writer) write(p []byte) error {
 	}
 
 	w.wrote += len(p)
-	if w.wrote > w.limit {
-		// limit rotate
+	if w.LimitRotate && w.wrote > w.limit {
+		// 大小滚动
 		err = w.rotate(year, int(month), day)
 		if err != nil {
 			return err
 		}
+		// 每个文件至少被写一次
 		f = w.f
 		w.wrote = len(p)
 	}
@@ -162,6 +153,7 @@ func (w *Writer) write(p []byte) error {
 func (w *Writer) ioloop() {
 	for buf := range w.logq {
 		if buf == nil {
+			// nil 代表 sync 信号
 			if w.f != nil {
 				err := w.f.Sync()
 				if err != nil {
@@ -173,23 +165,26 @@ func (w *Writer) ioloop() {
 			w.cond.Signal()
 			continue
 		}
-		err := w.write(buf.Bytes())
+
+		err := w.write(buf)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 		}
-		bufpool.Put(buf)
 	}
 }
 
 // Write 输出 p 内容到文件或 stdout
 func (w *Writer) Write(p []byte) (n int, err error) {
+	if len(p) == 0 {
+		return
+	}
+
 	if w.ToConsole {
 		os.Stdout.Write(p)
 	}
 
-	buf := bufpool.Get().(*bytes.Buffer)
-	buf.Reset()
-	n, err = buf.Write(p)
+	buf := make([]byte, len(p))
+	n = copy(buf, p)
 	w.logq <- buf
 	return
 }
@@ -208,30 +203,28 @@ func (w *Writer) Sync() error {
 //
 //   path 滚动日志文件
 //   limit 单个文件大小
-//   maxfiles 最多文件数量, 0 代表不限制文件数量
-func NewWriter(path string, limit int, maxfiles int) (*Writer, error) {
-	if path == "" || limit <= 0 || maxfiles < 0 {
-		return nil, errors.New("invalid argument")
-	}
-
+//   maxfiles 最多文件数量, 0 不限制文件数量
+func NewWriter(path string, limit int, maxfiles int) *Writer {
 	dir := filepath.Dir(path)
 	base := filepath.Base(path)
 	filist, maxid := collectFiles(dir, base, maxfiles)
 
 	w := &Writer{
-		limit:     limit,
-		logq:      make(chan *bytes.Buffer, queueCapacity),
-		ToConsole: false,
-		id:        maxid,
-		ring:      filist[:cap(filist)],
-		head:      0,
-		tail:      len(filist),
-		maxfiles:  maxfiles,
-		path:      path,
-		dir:       dir,
+		limit:       limit,
+		logq:        make(chan []byte, queueCapacity),
+		ToConsole:   false,
+		DailyRotate: true,
+		LimitRotate: true,
+		id:          maxid,
+		ring:        filist[:cap(filist)],
+		head:        0,
+		tail:        len(filist),
+		maxfiles:    maxfiles,
+		path:        path,
+		dir:         dir,
 	}
 	w.cond.L = &w.mu
 
 	go w.ioloop()
-	return w, nil
+	return w
 }
