@@ -14,7 +14,7 @@ const (
 	dirPerm  os.FileMode = 0755
 	filePerm os.FileMode = 0644
 
-	queueCapacity = 2048
+	queueSize = 2048
 )
 
 // Writer 实现了一个支持文件滚动的 io.Writer
@@ -24,11 +24,7 @@ type Writer struct {
 	day   int
 
 	limit int
-	logq  chan []byte
-
-	ToConsole   bool
-	DailyRotate bool
-	LimitRotate bool
+	wq    chan []byte
 
 	id   int
 	ring []fileinfo
@@ -55,7 +51,6 @@ func (w *Writer) push(id int, name string) string {
 	return removed
 }
 
-// reopen [unsafe]
 func (w *Writer) reopen(day int) (err error) {
 	if w.f != nil {
 		w.f.Close()
@@ -81,11 +76,9 @@ func (w *Writer) reopen(day int) (err error) {
 	return
 }
 
-// rotate [unsafe]
 func (w *Writer) rotate(year, month, day int) error {
 	if w.f != nil {
 		// prefix.yyyy-MM-dd.id
-		w.id++
 		if day == 1 {
 			month--
 			if month == 0 {
@@ -94,11 +87,12 @@ func (w *Writer) rotate(year, month, day int) error {
 			}
 		}
 
+		w.id++
+		newpath := w.path + fmt.Sprintf(".%04d-%02d-%02d.%d", year, month, w.day, w.id)
+
 		if runtime.GOOS == "windows" {
 			w.f.Close()
 		}
-
-		newpath := w.path + fmt.Sprintf(".%04d-%02d-%02d.%d", year, month, w.day, w.id)
 		os.Rename(w.path, newpath)
 
 		if w.maxfiles > 0 {
@@ -112,36 +106,30 @@ func (w *Writer) rotate(year, month, day int) error {
 	return w.reopen(day)
 }
 
-// write [unsafe]
 func (w *Writer) write(p []byte) error {
 	var err error
-	f := w.f
 	now := time.Now()
 	year, month, day := now.Date()
-	if w.DailyRotate && day != w.day {
+	if day != w.day {
 		// 日期滚动
-		if day != w.day {
-			err = w.rotate(year, int(month), day)
-			if err != nil {
-				return err
-			}
+		err = w.rotate(year, int(month), day)
+		if err != nil {
+			return err
 		}
-		f = w.f
 	}
 
 	w.wrote += len(p)
-	if w.LimitRotate && w.wrote > w.limit {
+	if w.wrote > w.limit {
 		// 大小滚动
 		err = w.rotate(year, int(month), day)
 		if err != nil {
 			return err
 		}
 		// 每个文件至少被写一次
-		f = w.f
 		w.wrote = len(p)
 	}
 
-	if f != nil {
+	if f := w.f; f != nil {
 		_, err = f.Write(p)
 		if err != nil {
 			w.day = 0
@@ -151,7 +139,7 @@ func (w *Writer) write(p []byte) error {
 }
 
 func (w *Writer) ioloop() {
-	for buf := range w.logq {
+	for buf := range w.wq {
 		if buf == nil {
 			// nil 代表 sync 信号
 			if w.f != nil {
@@ -179,20 +167,16 @@ func (w *Writer) Write(p []byte) (n int, err error) {
 		return
 	}
 
-	if w.ToConsole {
-		os.Stdout.Write(p)
-	}
-
 	buf := make([]byte, len(p))
 	n = copy(buf, p)
-	w.logq <- buf
+	w.wq <- buf
 	return
 }
 
 // Sync 同步文件缓冲
 func (w *Writer) Sync() error {
 	w.mu.Lock()
-	w.logq <- nil
+	w.wq <- nil
 	w.cond.Wait()
 	err := w.err
 	w.mu.Unlock()
@@ -210,22 +194,22 @@ func New(path string, limit int, maxfiles int) *Writer {
 	filist, maxid := collectFiles(dir, base, maxfiles)
 
 	w := &Writer{
-		limit:       limit,
-		logq:        make(chan []byte, queueCapacity),
-		ToConsole:   false,
-		DailyRotate: true,
-		LimitRotate: true,
-		id:          maxid,
-		ring:        filist[:cap(filist)],
-		head:        0,
-		tail:        len(filist),
-		maxfiles:    maxfiles,
-		path:        path,
-		dir:         dir,
+		limit:    limit,
+		wq:       make(chan []byte, queueSize),
+		id:       maxid,
+		ring:     filist[:cap(filist)],
+		head:     0,
+		tail:     len(filist),
+		maxfiles: maxfiles,
+		path:     path,
+		dir:      dir,
+		cond: sync.Cond{
+			L: &sync.Mutex{},
+		},
 	}
-	w.cond.L = &w.mu
 
 	go w.ioloop()
+
 	return w
 }
 
