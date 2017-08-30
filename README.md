@@ -11,16 +11,15 @@ go get github.com/shouyintv/beehive-logwriter-go
 package main
 
 import (
-	"github.com/shouyintv/beehive-logwriter-go"
+	logwriter "github.com/shouyintv/beehive-logwriter-go"
 )
 
 func main() {
-	w, err := logwriter.NewWriter("log/roll.log", 50*1024*1024, 10)
-	if err != nil {
-		panic(err)
-	}
-	w.ToConsole = true
+	// create roll.log at log directory.
+	// each log file limits 50MB.
+	// max 10 files.
+	w := logwriter.New("log/roll.log", 50*1024*1024, 10)
 	w.Write([]byte("hello world\n"))
-    w.Sync()
+	w.Sync()
 }
 ```
