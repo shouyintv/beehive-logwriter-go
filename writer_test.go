@@ -28,7 +28,7 @@ func TestRingPush(t *testing.T) {
 
 func TestWrite(t *testing.T) {
 	os.RemoveAll("./testdata")
-	w := NewWriter("./testdata/roll.log", 50, 0)
+	w := New("./testdata/roll.log", 50, 0)
 	log.SetOutput(w)
 
 	for i := 0; i < 30; i++ {

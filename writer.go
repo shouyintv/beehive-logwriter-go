@@ -26,10 +26,12 @@ type Writer struct {
 	limit int
 	wq    chan []byte
 
-	id   int
-	ring []fileinfo
-	head int
-	tail int
+	year  int
+	month int
+	id    int
+	ring  []fileinfo
+	head  int
+	tail  int
 
 	maxfiles int
 	path     string
@@ -51,7 +53,7 @@ func (w *Writer) push(id int, name string) string {
 	return removed
 }
 
-func (w *Writer) reopen(day int) (err error) {
+func (w *Writer) reopen(year, month, day int) (err error) {
 	if w.f != nil {
 		w.f.Close()
 	}
@@ -63,6 +65,8 @@ func (w *Writer) reopen(day int) (err error) {
 
 	w.f, err = os.OpenFile(w.path, os.O_RDWR|os.O_CREATE|os.O_APPEND, filePerm)
 	if err == nil {
+		w.year = year
+		w.month = month
 		w.day = day
 		info, err := w.f.Stat()
 		if err == nil {
@@ -79,16 +83,8 @@ func (w *Writer) reopen(day int) (err error) {
 func (w *Writer) rotate(year, month, day int) error {
 	if w.f != nil {
 		// prefix.yyyy-MM-dd.id
-		if day == 1 {
-			month--
-			if month == 0 {
-				month = 12
-				year--
-			}
-		}
-
 		w.id++
-		newpath := w.path + fmt.Sprintf(".%04d-%02d-%02d.%d", year, month, w.day, w.id)
+		newpath := w.path + fmt.Sprintf(".%04d-%02d-%02d.%d", w.year, w.month, w.day, w.id)
 
 		if runtime.GOOS == "windows" {
 			w.f.Close()
@@ -103,7 +99,7 @@ func (w *Writer) rotate(year, month, day int) error {
 		}
 	}
 
-	return w.reopen(day)
+	return w.reopen(year, month, day)
 }
 
 func (w *Writer) write(p []byte) error {
@@ -177,7 +173,9 @@ func (w *Writer) Write(p []byte) (n int, err error) {
 func (w *Writer) Sync() error {
 	w.mu.Lock()
 	w.wq <- nil
+	w.cond.L.Lock()
 	w.cond.Wait()
+	w.cond.L.Unlock()
 	err := w.err
 	w.mu.Unlock()
 	return err
